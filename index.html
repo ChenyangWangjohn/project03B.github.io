@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CS 180 Project 3 Part B</title>
+  <meta name="description" content="CS 180 Project 3 Part B: Feature Matching for Autostitching">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="container">
+      <h1>CS 180 Project 3 Part B</h1>
+      <p class="subtitle">CS 180: Computer Vision • Fall 2025</p>
+      <p class="project-title">Feature Matching for Autostitching</p>
+    </div>
+  </header>
+
+  <main class="container">
+    <section id="overview">
+      <h2>Overview</h2>
+      <div class="content">
+        <p>
+          In Part B, I implemented automatic feature detection and matching to create panoramas without manual point selection. Using Harris corner detection, ANMS, MOPS descriptors, and RANSAC, the pipeline detects corners, matches features, and estimates homographies automatically. This project demonstrates how proper photo capture is crucial - images need substantial overlap with rich textures for feature matching to work.
+        </p>
+      </div>
+    </section>
+
+    <section id="part-b1a">
+      <h2>B.1-A: Harris Corner Detection</h2>
+      <p class="section-intro">
+        Detecting interest points using the Harris corner detector.
+      </p>
+
+      <div class="content">
+        <p>
+          I used the Harris corner detector to find potential feature points in both images. The detector identifies regions where intensity changes significantly in multiple directions - these are corners or interesting features. After filtering weak corners and discarding edge pixels, I got around 1000-2500 corners per image depending on scene texture.
+        </p>
+      </div>
+
+      <div class="image-grid">
+        <div class="image-item">
+          <figure>
+            <img src="pictures/b1a_harris_response_maps_new.png" alt="Harris response maps">
+            <figcaption><strong>Harris Response Maps</strong> Heatmaps showing corner strength across the images. Brighter regions indicate stronger corners. The detector finds thousands of candidates concentrated around textured objects like the monitor, desk items, and frames.</figcaption>
+          </figure>
+        </div>
+        <div class="image-item">
+          <figure>
+            <img src="pictures/b1a_harris_corners_overlay_new.png" alt="Harris corners overlay">
+            <figcaption><strong>Detected Corners</strong> Red dots show all detected Harris corners (~1000-2500 per image). Notice they cluster densely around textured regions like the picture frame and desk edges, while flat walls have few corners.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section id="part-b1b">
+      <h2>B.1-B: Adaptive Non-Maximal Suppression (ANMS)</h2>
+      <p class="section-intro">
+        Selecting a spatially well-distributed subset of corners.
+      </p>
+
+      <div class="content">
+        <p>
+          Too many corners creates redundancy and slow matching. ANMS selects 500 corners that are well-distributed across the image rather than clustered. For each corner, we compute a "suppression radius" - the distance to the nearest stronger corner. We keep the 500 corners with the largest suppression radii, ensuring good spatial coverage.
+        </p>
+      </div>
+
+      <div class="image-grid">
+        <div class="image-item">
+          <figure>
+            <img src="pictures/b1b_anms_comparison_new.png" alt="ANMS comparison">
+            <figcaption><strong>Before vs After ANMS</strong> Left column shows dense clustering of all Harris corners. Right column shows the 500 selected corners (green) that are more evenly distributed across the scene, providing better coverage for matching.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section id="part-b2">
+      <h2>B.2: Feature Descriptors</h2>
+      <p class="section-intro">
+        Extracting distinctive 64-dimensional descriptors for each corner.
+      </p>
+
+      <div class="content">
+        <p>
+          For each of the 500 corners, I extract a 40×40 pixel patch, apply Gaussian blur, downsample to 8×8, and normalize using z-score. This creates a 64-dimensional descriptor that captures the local appearance around each corner while being invariant to brightness and contrast changes. The blur+downsample acts as anti-aliasing and makes descriptors more robust to small position shifts.
+        </p>
+      </div>
+
+      <div class="image-grid">
+        <div class="image-item">
+          <figure>
+            <img src="pictures/b2_descriptors_context_new.png" alt="Descriptor visualization">
+            <figcaption><strong>Descriptor Extraction Process</strong> For each corner: extract 40×40 patch (left), downsample to 8×8 (right), then normalize. The 8×8 pattern encodes local texture while being compact enough for fast matching.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section id="part-b3">
+      <h2>B.3: Feature Matching</h2>
+      <p class="section-intro">
+        Matching features between images using Lowe's ratio test.
+      </p>
+
+      <div class="content">
+        <p>
+          I match descriptors using nearest neighbor search with Lowe's ratio test. For each descriptor in the left image, I find the two closest matches in the right image. If the ratio of distances (closest/second-closest) is below 0.75, the match is accepted as confident. This filters out ambiguous matches where multiple features look similar. With good photos, this gives 60-100 high-quality matches.
+        </p>
+      </div>
+
+      <div class="image-grid">
+        <div class="image-item">
+          <figure>
+            <img src="pictures/b3_feature_matches_new.png" alt="Feature matches">
+            <figcaption><strong>Matched Features (Success)</strong> Colored lines show matched feature pairs. With proper photos containing overlapping textured objects (frame, desk items), most matches are correct and roughly horizontal, indicating good alignment potential.</figcaption>
+          </figure>
+        </div>
+        <div class="image-item">
+          <figure>
+            <img src="pictures/b3_match_statistics_new.png" alt="Match statistics">
+            <figcaption><strong>Match Quality Statistics</strong> Left: distribution of match distances (lower is better). Right: ratio distribution showing most descriptors are rejected (red region) while confident matches pass the 0.75 threshold (green region).</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section id="part-b4">
+      <h2>B.4: RANSAC + Automatic Stitching</h2>
+      <p class="section-intro">
+        Robustly estimating homography and creating automatic panoramas.
+      </p>
+
+      <div class="content">
+        <p>
+          Even with Lowe's ratio test, some matches are still wrong. RANSAC handles outliers by repeatedly sampling 4 random matches, computing a homography, and testing how many other matches agree (inliers). After many iterations, we keep the homography with the most inliers and refine it using all inlier points. With good photos, we get 60-80% inliers. With bad photos (no overlap or only flat walls), we get less than 10% inliers and stitching fails.
+        </p>
+      </div>
+
+      <div class="image-grid">
+        <div class="image-item">
+          <figure>
+            <img src="pictures/b4_ransac_inliers_outliers_new.png" alt="RANSAC inliers">
+            <figcaption><strong>RANSAC Results (Success)</strong> Green lines are inliers (correct matches), red lines are outliers (rejected). With good photos, most matches are inliers, giving a reliable homography estimate for stitching.</figcaption>
+          </figure>
+        </div>
+        <div class="image-item">
+          <figure>
+            <img src="pictures/b4_panorama_automatic_new.png" alt="Automatic panorama">
+            <figcaption><strong>Final Automatic Panorama</strong> The automatically stitched result using RANSAC homography and alpha blending. With proper photo capture (overlapping textured regions), the automatic pipeline produces good alignment without manual point selection.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section id="failure-comparison">
+      <h2>Success vs Failure: The Importance of Photo Quality</h2>
+      <p class="section-intro">
+        Comparing results with good photos vs bad photos demonstrates why scene overlap matters.
+      </p>
+
+      <div class="content">
+        <p>
+          <strong>What went wrong initially:</strong> My first attempt used photos where the overlap region was mostly flat walls with no texture. The feature detector found corners on the walls, but these were just noise - not distinctive features. This led to almost all matches being wrong (95% outliers), causing RANSAC to fail and producing completely distorted panoramas.
+        </p>
+        <p>
+          <strong>The fix:</strong> I re-shot the photos focusing on the desk area where there are textured objects (monitor, frame, papers, desk items). Now the overlap region contains distinctive features that can be reliably matched. This increased inlier rate from 5% to 80%, making automatic stitching actually work.
+        </p>
+      </div>
+
+      <div class="choice-grid">
+        <div class="choice-item">
+          <figure>
+            <img src="pictures/b3_feature_matches.png" alt="Failed matching">
+            <figcaption>
+              <strong>Failed Attempt: Wrong Photos</strong>
+              <p>With flat walls in the overlap region, matches are mostly diagonal/crossed lines indicating wrong correspondences. Only a few scattered matches happen to be correct by chance.</p>
+            </figcaption>
+          </figure>
+        </div>
+        <div class="choice-item">
+          <figure>
+            <img src="pictures/b4_ransac_inliers_outliers.png" alt="Failed RANSAC">
+            <figcaption>
+              <strong>Failed RANSAC: 4 inliers, 65 outliers (5.8%)</strong>
+              <p>RANSAC finds almost no consistent inliers because the matches are wrong. With only 4 good points, the estimated homography is unreliable and produces severe distortion.</p>
+            </figcaption>
+          </figure>
+        </div>
+        <div class="choice-item">
+          <figure>
+            <img src="pictures/b4_panorama_automatic.png" alt="Failed panorama">
+            <figcaption>
+              <strong>Failed Panorama: Severe Distortion</strong>
+              <p>The bad homography from wrong matches creates extreme warping. The ceiling becomes a twisted mess. This shows automatic stitching completely fails without proper photo capture.</p>
+            </figcaption>
+          </figure>
+        </div>
+      </div>
+
+      <h3>Key Lessons Learned</h3>
+      <div class="content">
+        <p>
+          <strong>1. Overlap region must have texture:</strong> Flat walls, blank surfaces, and uniform areas don't provide distinctive features for matching. The overlap needs objects with corners, edges, and patterns.
+        </p>
+        <p>
+          <strong>2. Scene content matters more than algorithm tuning:</strong> No amount of parameter adjustment can fix fundamentally bad input photos. Good capture technique (ensuring textured overlap) is more important than perfect algorithm implementation.
+        </p>
+        <p>
+          <strong>3. RANSAC success depends on match quality:</strong> When most matches are outliers (>90%), RANSAC struggles to find a consistent model. When most matches are inliers (>60%), RANSAC reliably filters remaining outliers and produces good results.
+        </p>
+      </div>
+    </section>
+
+    <section id="challenges">
+      <h2>Implementation Notes and Challenges</h2>
+      <div class="content">
+        <p>
+          <strong>Harris Detection Performance:</strong> The original 4032×3024 images were too slow, so I resized to 1000px width. I also used percentile thresholding to filter weak corners, keeping only the top candidates for ANMS.
+        </p>
+        <p>
+          <strong>ANMS Computation:</strong> Computing suppression radii for thousands of corners is O(N²). For 2500 corners, this takes a few seconds but is manageable. The algorithm ensures good spatial distribution which is crucial for robust homography estimation.
+        </p>
+        <p>
+          <strong>Lowe Ratio Tuning:</strong> I initially used 0.6 (very strict) which gave only 30 matches - too few for RANSAC. Switching to the standard 0.75 provided 60-100 matches with good inlier ratio, which is ideal.
+        </p>
+        <p>
+          <strong>computeH Implementation:</strong> I used the DLT (Direct Linear Transform) approach from Part A, solving Ah=b using least squares. The key is setting h[2,2]=1 for normalization. This proved more stable than SVD-based homogeneous system solving.
+        </p>
+        <p>
+          <strong>What Worked Well:</strong> The automatic pipeline successfully replicated manual stitching results when given proper input photos. The combination of ANMS spatial distribution, Lowe ratio filtering, and RANSAC outlier rejection created a robust system that handles typical matching errors gracefully.
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container">
+      <p>CS 180 Project 3 Part B • Fall 2025 • UC Berkeley</p>
+    </div>
+  </footer>
+</body>
+</html>
